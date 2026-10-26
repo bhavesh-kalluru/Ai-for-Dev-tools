@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PulseOps · Live Incident Tracker</title>
+<style>
+:root{font-family:Inter,system-ui,sans-serif;color:#e5e7eb;background:#0b1220}
+*{box-sizing:border-box}body{margin:0}main{max-width:1180px;margin:auto;padding:32px 20px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-size:2rem;margin:0}h2{font-size:1.1rem}p{color:#94a3b8}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:24px 0}
+.card,.panel{background:#141f32;border:1px solid #29374e;border-radius:14px;padding:18px}
+.stat{font-size:2rem;font-weight:800;margin-top:8px}.layout{display:grid;grid-template-columns:1fr 1.5fr;gap:18px}
+label{display:block;color:#cbd5e1;font-size:.88rem;margin:12px 0 6px}
+input,textarea,select{width:100%;background:#0b1220;color:#f8fafc;border:1px solid #334155;border-radius:8px;padding:11px;font:inherit}
+textarea{min-height:90px;resize:vertical}button{border:0;border-radius:8px;background:#38bdf8;color:#062033;padding:11px 16px;font-weight:750;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}.incident{padding:16px 0;border-bottom:1px solid #334155}
+.incident:last-child{border:0}.top{display:flex;justify-content:space-between;gap:10px}.pill{border-radius:50px;padding:3px 9px;background:#334155;font-size:.72rem;text-transform:uppercase}
+.critical{background:#7f1d1d;color:#fecaca}.high{background:#78350f;color:#fef3c7}.resolved{color:#86efac}
+small{color:#94a3b8}.message{margin:10px 0;color:#fda4af;min-height:18px}.muted{color:#94a3b8}
+@media(max-width:780px){.grid{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:1fr}}
+</style>
+</head>
+<body><main>
+<header><div><h1>⚡ PulseOps</h1><p>Real-time service incident command center</p></div><div id="connection" aria-live="polite">Connecting…</div></header>
+<section class="grid" aria-label="Incident metrics">
+<div class="card">Total<div class="stat" id="total">—</div></div>
+<div class="card">Active<div class="stat" id="open">—</div></div>
+<div class="card">Resolved<div class="stat" id="resolved">—</div></div>
+<div class="card">Critical active<div class="stat" id="critical_open">—</div></div>
+</section>
+<div class="layout">
+<section class="panel"><h2>Report an incident</h2>
+<form id="new-form">
+<label for="title">Title</label><input id="title" required minlength="3" maxlength="120" placeholder="API requests timing out">
+<label for="service">Affected service</label><input id="service" required minlength="2" maxlength="80" placeholder="Payments API">
+<label for="severity">Severity</label><select id="severity"><option>low</option><option selected>medium</option><option>high</option><option>critical</option></select>
+<label for="description">Description</label><textarea id="description" required minlength="3" maxlength="2000" placeholder="What is happening?"></textarea>
+<p id="form-error" class="message" role="alert"></p><button type="submit">Create incident</button>
+</form></section>
+<section class="panel"><div class="top"><h2>Live incidents</h2><div><label for="status-filter">Filter by status</label><select id="status-filter"><option value="">All statuses</option><option>investigating</option><option>identified</option><option>monitoring</option><option>resolved</option></select></div></div>
+<div id="incidents" aria-live="polite">Loading incidents…</div>
+</section></div></main>
+<script>
+const $=id=>document.getElementById(id);
+let incidents=[];
+function node(tag,text,cls){const e=document.createElement(tag);e.textContent=text;if(cls)e.className=cls;return e;}
+async function request(url,options){const r=await fetch(url,options);const data=await r.json();if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:'Request failed');return data;}
+function render(){
+ const selected=$('status-filter').value, list=$('incidents');list.replaceChildren();
+ const shown=incidents.filter(i=>!selected||i.status===selected);
+ if(!shown.length){list.append(node('p','No incidents found.'));return;}
+ for(const i of shown){
+  const row=node('article','','incident'),top=node('div','','top'),left=node('div'),name=node('strong',i.title),details=node('p',i.service+' · '+new Date(i.created_at).toLocaleString());
+  left.append(name,details);top.append(left,node('span',i.severity,'pill '+i.severity));row.append(top,node('p',i.description),node('small','Status: '+i.status,'status '+i.status));
+  const form=node('form'), select=document.createElement('select');
+  for(const status of ['investigating','identified','monitoring','resolved']){const opt=new Option(status,status);select.add(opt);}
+  select.value=i.status;select.setAttribute('aria-label','New status for '+i.title);
+  const message=document.createElement('input');message.placeholder='Progress update';message.required=true;message.minLength=3;message.maxLength=1000;message.setAttribute('aria-label','Progress message for '+i.title);
+  const button=node('button','Post update');button.type='submit';
+  if(i.status==='resolved'){select.disabled=true;message.disabled=true;button.disabled=true;}
+  const error=node('p','','message');error.setAttribute('role','alert');form.append(select,message,button,error);
+  form.addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;error.textContent='';try{await request('/api/incidents/'+encodeURIComponent(i.id)+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:select.value,message:message.value})});await refresh();}catch(ex){error.textContent=ex.message;}finally{button.disabled=false;}});
+  row.append(form);list.append(row);
+ }
+}
+async function refresh(){
+ try{const [items,stats]=await Promise.all([request('/api/incidents'),request('/api/metrics')]);incidents=items;for(const k of ['total','open','resolved','critical_open'])$(k).textContent=stats[k];render();}
+ catch(ex){$('incidents').textContent='Unable to load: '+ex.message;}
+}
+$('status-filter').addEventListener('change',render);
+$('new-form').addEventListener('submit',async e=>{
+ e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;$('form-error').textContent='';
+ try{await request('/api/incidents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:$('title').value,service:$('service').value,severity:$('severity').value,description:$('description').value})});e.target.reset();await refresh();}
+ catch(ex){$('form-error').textContent=ex.message;}finally{button.disabled=false;}
+});
+let retry=1000;
+function connect(){
+ const scheme=location.protocol==='https:'?'wss':'ws',socket=new WebSocket(scheme+'://'+location.host+'/ws');
+ socket.onopen=()=>{$('connection').textContent='● Live';retry=1000;};
+ socket.onmessage=()=>refresh();
+ socket.onclose=()=>{$('connection').textContent='○ Reconnecting';setTimeout(connect,retry);retry=Math.min(retry*2,30000);};
+ socket.onerror=()=>socket.close();
+}
+refresh();connect();setInterval(refresh,60000);
+</script></body></html>

@@ -1,0 +1,23 @@
+name: PulseOps tests
+on:
+  push:
+    paths:
+      - "live-incident-tracker/**"
+      - ".github/workflows/pulseops-tests.yml"
+  pull_request:
+    paths:
+      - "live-incident-tracker/**"
+      - ".github/workflows/pulseops-tests.yml"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: live-incident-tracker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
