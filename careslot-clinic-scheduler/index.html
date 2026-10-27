@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareSlot | Clinic Capacity & Waitlist</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#f4f8fb;color:#15283b}*{box-sizing:border-box}
+body{margin:0}header{background:#103b4d;color:white;padding:32px 20px}header>div,main{max-width:1160px;margin:auto}
+h1{font-size:2rem;margin:0}header p{color:#c5e3e9;margin:8px 0}main{padding:28px 20px}
+.badge{display:inline-flex;align-items:center;border-radius:30px;padding:5px 10px;background:#d7f7ec;color:#05604d;font-size:.8rem;font-weight:700}
+.top{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
+.card,.panel{background:white;border:1px solid #dce7ef;border-radius:16px;padding:20px;box-shadow:0 3px 14px #12334b0a}
+.stat{font-size:2rem;font-weight:800;margin-top:8px;color:#0b7185}.layout{display:grid;grid-template-columns:1fr 1.6fr;gap:20px}
+h2{margin:0 0 16px;font-size:1.2rem}label{display:block;font-size:.88rem;font-weight:700;margin:12px 0 6px}
+input,select{width:100%;border:1px solid #b8cbd8;border-radius:9px;padding:11px;font:inherit;color:#18364b;background:#fff}
+button{background:#087d8c;color:white;border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:700;cursor:pointer}
+button:hover{background:#056b79}button:disabled{background:#8eaeb4;cursor:not-allowed}.secondary{background:#eaf4f7;color:#126678}.secondary:hover{background:#d9eef3}
+.slot{border-top:1px solid #e1eaf0;padding:16px 0}.slot:first-child{border-top:0}.slot-title{font-weight:750}
+.slot-details{color:#617889;font-size:.88rem;margin:8px 0 12px}.actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.error{color:#b42318;min-height:18px;font-size:.88rem}.muted{color:#62798b}.ticket{border-top:1px solid #e1eaf0;padding:12px 0;overflow-wrap:anywhere}
+.ticket code{background:#eaf4f7;padding:4px 6px;border-radius:6px;font-size:.8rem}footer{max-width:1160px;margin:0 auto 30px;padding:0 20px;color:#607788;font-size:.85rem}
+@media(max-width:800px){.layout{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header><div class="top"><div><h1>CareSlot</h1><p>Community clinic capacity & waitlist scheduler</p></div><span id="connection" class="badge" aria-live="polite">Connecting…</span></div></header>
+<main>
+<section class="stats" aria-label="System metrics">
+<div class="card">Appointment slots<div class="stat" id="slots-count">—</div></div>
+<div class="card">Confirmed<div class="stat" id="confirmed-count">—</div></div>
+<div class="card">Waitlisted<div class="stat" id="waitlisted-count">—</div></div>
+<div class="card">Cancelled<div class="stat" id="cancelled-count">—</div></div>
+</section>
+<div class="layout">
+<section class="panel"><h2>Create a clinic slot</h2>
+<form id="slot-form">
+<label for="service">Service</label><input id="service" placeholder="Routine check-in" minlength="3" maxlength="80" required>
+<label for="starts">Start date and time</label><input id="starts" type="datetime-local" required>
+<label for="duration">Duration (minutes)</label><input id="duration" type="number" value="30" min="10" max="240" required>
+<label for="capacity">Capacity</label><input id="capacity" type="number" value="2" min="1" max="20" required>
+<p id="slot-error" class="error" role="alert"></p><button type="submit">Create slot</button>
+</form>
+<p class="muted">Demo only: this tool has no login, real patient records, or medical advice.</p>
+</section>
+<div>
+<section class="panel"><div class="top"><h2>Upcoming slots</h2><label for="filter">Service filter <input id="filter" placeholder="All services"></label></div>
+<div id="slot-list" aria-live="polite">Loading…</div></section>
+<section class="panel" style="margin-top:20px"><h2>My demo reservation tickets</h2><p class="muted">Anonymous ticket IDs are saved in this browser only.</p>
+<div id="tickets" aria-live="polite"></div></section>
+</div></div>
+</main><footer>Prototype for learning and portfolio demonstration. Never enter patient-identifying or clinical information.</footer>
+<script>
+const $=id=>document.getElementById(id);
+const ticketsKey='careslot-demo-tickets-v1';
+let slots=[];
+let ticketIds=[];
+try{ticketIds=JSON.parse(localStorage.getItem(ticketsKey)||'[]');if(!Array.isArray(ticketIds))ticketIds=[];}catch{ticketIds=[];}
+function el(tag,text,cls){const node=document.createElement(tag);node.textContent=text||'';if(cls)node.className=cls;return node;}
+function saveTickets(){localStorage.setItem(ticketsKey,JSON.stringify(ticketIds));}
+async function api(url,options){const response=await fetch(url,options);const data=await response.json();if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Request failed');return data;}
+function post(url,body){return api(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});}
+function renderSlots(){
+ const list=$('slot-list');list.replaceChildren();const filter=$('filter').value.trim().toLowerCase();
+ const shown=slots.filter(s=>s.service.toLowerCase().includes(filter));
+ if(!shown.length){list.append(el('p','No matching slots. Create one to get started.','muted'));return;}
+ for(const slot of shown){
+  const row=el('article','','slot');row.append(el('div',slot.service,'slot-title'));
+  row.append(el('div',new Date(slot.starts_at).toLocaleString()+' · '+slot.duration_minutes+' min · '+slot.confirmed+'/'+slot.capacity+' confirmed · '+slot.waitlisted+' waiting','slot-details'));
+  const actions=el('div','','actions');const button=el('button',slot.available?'Reserve a spot':'Join waitlist');
+  const error=el('span','','error');button.disabled=new Date(slot.starts_at)<=new Date();
+  button.addEventListener('click',async()=>{button.disabled=true;error.textContent='';try{
+   const reservation=await post('/api/slots/'+encodeURIComponent(slot.id)+'/reservations',{});
+   ticketIds.unshift(reservation.id);saveTickets();await refresh();
+  }catch(e){error.textContent=e.message;}finally{button.disabled=false;}});
+  actions.append(button,error);row.append(actions);list.append(row);
+ }
+}
+async function renderTickets(){
+ const container=$('tickets');container.replaceChildren();if(!ticketIds.length){container.append(el('p','No tickets yet. Reserve a slot above.','muted'));return;}
+ for(const id of ticketIds){
+  const row=el('article','','ticket');try{
+   const ticket=await api('/api/reservations/'+encodeURIComponent(id));
+   const slot=slots.find(s=>s.id===ticket.slot_id);
+   row.append(el('div',(slot?slot.service:'Appointment')+' · '+ticket.status,'slot-title'));
+   row.append(el('div',ticket.queue_position?'Waitlist position: '+ticket.queue_position:'Ticket ID:','slot-details'));
+   row.append(el('code',ticket.id));
+   if(ticket.status!=='cancelled'){
+    const cancel=el('button','Cancel reservation','secondary');cancel.style.marginLeft='10px';
+    const error=el('span','','error');cancel.addEventListener('click',async()=>{cancel.disabled=true;try{await post('/api/reservations/'+encodeURIComponent(id)+'/cancel',{});await refresh();}catch(e){error.textContent=e.message;cancel.disabled=false;}});
+    row.append(cancel,error);
+   }
+  }catch(e){row.append(el('p','Ticket unavailable: '+e.message,'error'));}
+  container.append(row);
+ }
+}
+async function refresh(){try{
+ const [items,metrics]=await Promise.all([api('/api/slots'),api('/api/metrics')]);slots=items;
+ for(const name of ['slots','confirmed','waitlisted','cancelled'])$(name+'-count').textContent=metrics[name];
+ renderSlots();await renderTickets();
+}catch(e){$('slot-list').textContent='Unable to load: '+e.message;}}
+$('filter').addEventListener('input',renderSlots);
+$('slot-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.target.querySelector('button');button.disabled=true;$('slot-error').textContent='';try{
+ const starts=new Date($('starts').value);if(Number.isNaN(starts.getTime()))throw new Error('Choose a valid date');
+ await post('/api/slots',{service:$('service').value,starts_at:starts.toISOString(),duration_minutes:Number($('duration').value),capacity:Number($('capacity').value)});
+ event.target.reset();await refresh();
+}catch(e){$('slot-error').textContent=e.message;}finally{button.disabled=false;}});
+function connect(){const ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws');
+ ws.onopen=()=>{$('connection').textContent='● Live updates';};ws.onmessage=()=>refresh();
+ ws.onclose=()=>{$('connection').textContent='○ Reconnecting';setTimeout(connect,3000);};ws.onerror=()=>ws.close();}
+refresh();connect();setInterval(refresh,60000);
+</script>
+</body></html>
