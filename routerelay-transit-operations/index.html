@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="RouteRelay: real-time transit operations and service disruption dashboard">
+<title>RouteRelay | Transit Operations</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,sans-serif;background:#09111f;color:#e2e8f0}
+*{box-sizing:border-box}body{margin:0}main{max-width:1240px;margin:auto;padding:28px 20px 60px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{font-size:2rem;margin:0}h2{font-size:1.12rem;margin:0 0 16px}
+p,small{color:#a5b4c7}a{color:#67e8f9}
+.card{border:1px solid #2a3b50;background:#142238;border-radius:16px;padding:20px}
+.hero{margin:16px 0 24px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+label{display:block;margin:10px 0 6px;color:#cbd5e1;font-size:.9rem}
+input,select,textarea{display:block;width:100%;background:#0a1525;border:1px solid #3c506a;border-radius:9px;color:#f1f5f9;font:inherit;padding:10px}
+textarea{min-height:96px;resize:vertical}
+button{background:#22d3ee;border:0;border-radius:9px;padding:10px 16px;color:#05212d;font-weight:750;cursor:pointer;margin-top:12px}
+button.secondary{background:#334155;color:#f8fafc}button:disabled{opacity:.55;cursor:not-allowed}
+.inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.inline>*{flex:1}
+.section{margin-top:18px}.pill{font-size:.75rem;padding:4px 8px;border-radius:20px;background:#334155;text-transform:capitalize}
+.major,.critical{background:#7f1d1d;color:#fecaca}.minor{background:#78350f;color:#fef3c7}
+.row{border-bottom:1px solid #304055;padding:13px 0}.row:last-child{border:0}
+.row-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.muted{color:#94a3b8}.error{color:#fda4af;min-height:20px}
+table{border-collapse:collapse;width:100%;font-size:.9rem}td,th{padding:11px 8px;text-align:left;border-bottom:1px solid #304055}th{color:#a5b4c7}
+.table-wrap{overflow-x:auto}.status{font-size:.86rem;color:#67e8f9}
+@media(max-width:850px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body><main>
+<header><div><h1>🚌 RouteRelay</h1><p class="hero">Transit disruption tracking and estimated arrivals, without expensive infrastructure.</p></div><span id="connection" class="pill" aria-live="polite">Connecting…</span></header>
+<div class="grid">
+<section class="card"><h2>Create a transit route</h2>
+<form id="route-form">
+<label for="route-name">Route name</label><input id="route-name" required minlength="3" maxlength="100" placeholder="Airport Express">
+<label for="route-mode">Mode</label><select id="route-mode"><option>bus</option><option>tram</option><option>rail</option><option>ferry</option></select>
+<label for="route-stops">Stops (one per line: name | minutes from origin)</label>
+<textarea id="route-stops" required placeholder="Central Station | 0&#10;University | 15&#10;Airport Terminal | 35"></textarea>
+<small>Offsets must start at 0 and increase at every stop.</small><p class="error" id="route-error" role="alert"></p><button type="submit">Add route</button>
+</form></section>
+<section class="card"><h2>Schedule a trip</h2>
+<form id="trip-form">
+<label for="trip-route">Route</label><select id="trip-route" required></select>
+<div class="inline"><div><label for="trip-date">Service date</label><input id="trip-date" type="date" required></div><div><label for="trip-time">Departure (local)</label><input id="trip-time" type="time" required value="09:00"></div></div>
+<label for="trip-delay">Delay in minutes (-60 to 360)</label><input id="trip-delay" type="number" min="-60" max="360" value="0" required>
+<p class="error" id="trip-error" role="alert"></p><button type="submit">Schedule trip</button>
+</form></section>
+<section class="card"><h2>Post a service alert</h2>
+<form id="alert-form">
+<label for="alert-severity">Severity</label><select id="alert-severity"><option>info</option><option selected>minor</option><option>major</option><option>critical</option></select>
+<label for="alert-message">Message</label><textarea id="alert-message" minlength="5" maxlength="500" required placeholder="Road closure near Central Station"></textarea>
+<p class="muted">Alert applies to the selected route in the live board.</p>
+<p class="error" id="alert-error" role="alert"></p><button type="submit">Publish alert</button>
+</form></section>
+<section class="card"><h2>Live route board</h2>
+<label for="board-route">Route</label><select id="board-route"></select>
+<label for="board-date">Service date</label><input id="board-date" type="date">
+<div id="board-summary" class="section muted">Create a route to begin.</div>
+<div id="alerts" class="section" aria-live="polite"></div>
+</section>
+</div>
+<section class="card section"><h2>Arrival predictions</h2>
+<p class="muted">Predictions use published schedules plus operator-entered delays. They are not GPS measurements.</p>
+<div class="table-wrap"><table><thead><tr><th>Stop</th><th>Scheduled</th><th>Predicted</th><th>Trip status</th></tr></thead><tbody id="arrivals"><tr><td colspan="4">No arrivals yet</td></tr></tbody></table></div>
+</section>
+<section class="card section"><h2>Manage scheduled trips</h2><div id="trips" aria-live="polite">No trips yet.</div></section>
+<footer><p>Portfolio prototype · Timetable times are route-local and have no time-zone conversion · <a href="/docs">Open API docs</a></p></footer>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const make=(tag,text,cls)=>{const el=document.createElement(tag);el.textContent=text;if(cls)el.className=cls;return el;};
+let routes=[];
+function todayLocal(){const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');}
+$('trip-date').value=todayLocal();$('board-date').value=todayLocal();
+async function api(path,options){const response=await fetch(path,options);const data=await response.json();if(!response.ok){const detail=data.detail;throw new Error(typeof detail==='string'?detail:JSON.stringify(detail||'Request failed'));}return data;}
+const json=(method,body)=>({method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+function selectOptions(el,items,preferred){el.replaceChildren();for(const item of items){const option=new Option(item.name+' ('+item.mode+')',item.id);el.add(option);}if(items.some(item=>item.id===preferred))el.value=preferred;}
+async function refreshRoutes(){
+ const preferred=$('board-route').value;routes=await api('/api/routes');
+ selectOptions($('board-route'),routes,preferred);
+ selectOptions($('trip-route'),routes,$('trip-route').value);
+ await refreshBoard();
+}
+function addCell(row,text){row.append(make('td',text));}
+function dateLabel(value){return value?value.replace('T',' '):'Unavailable';}
+async function refreshBoard(){
+ const id=$('board-route').value;
+ $('arrivals').replaceChildren();$('alerts').replaceChildren();$('trips').replaceChildren();
+ if(!id){$('board-summary').textContent='Create a route to begin.';return;}
+ try{
+  const board=await api('/api/board/'+encodeURIComponent(id)+'?service_date='+encodeURIComponent($('board-date').value));
+  $('board-summary').textContent=board.route.name+' · '+board.route.mode+' · '+board.route.stops.length+' stops · '+board.trips.length+' trips';
+  if(!board.arrivals.length){const row=make('tr');addCell(row,'No trips scheduled for this date.');$('arrivals').append(row);}
+  for(const item of board.arrivals){const row=make('tr');addCell(row,item.stop);addCell(row,dateLabel(item.scheduled_at));addCell(row,dateLabel(item.predicted_at));addCell(row,item.status+' ('+(item.delay_minutes>=0?'+':'')+item.delay_minutes+' min)');$('arrivals').append(row);}
+  if(!board.alerts.length)$('alerts').append(make('p','No active service alerts.','muted'));
+  for(const alert of board.alerts){
+   const box=make('div','','row'),head=make('div','','row-head');
+   head.append(make('strong',alert.message),make('span',alert.severity,'pill '+alert.severity));
+   const button=make('button','Resolve','secondary');button.addEventListener('click',async()=>{button.disabled=true;try{await api('/api/alerts/'+alert.id+'/resolve',{method:'POST'});await refreshBoard();}catch(e){window.alert(e.message);button.disabled=false;}});
+   box.append(head,button);$('alerts').append(box);
+  }
+  if(!board.trips.length)$('trips').append(make('p','No trips for this date.','muted'));
+  for(const trip of board.trips){
+   const box=make('div','','row'),heading=make('div','','row-head');
+   heading.append(make('strong','Departure '+trip.departure_time),make('span',trip.status,'pill'));
+   const form=make('form'),controls=make('div','','inline'),status=document.createElement('select');
+   for(const value of ['scheduled','boarding','en_route','completed','cancelled'])status.add(new Option(value,value));
+   status.value=trip.status;status.setAttribute('aria-label','Status for trip '+trip.departure_time);
+   const delay=document.createElement('input');delay.type='number';delay.min=-60;delay.max=360;delay.value=trip.delay_minutes;delay.required=true;delay.setAttribute('aria-label','Delay minutes for trip '+trip.departure_time);
+   const note=document.createElement('input');note.placeholder='Operator update note';note.required=true;note.minLength=3;note.maxLength=500;note.setAttribute('aria-label','Update note');
+   const button=make('button','Save update');button.type='submit';
+   const final=['completed','cancelled'].includes(trip.status);status.disabled=final;delay.disabled=final;note.disabled=final;button.disabled=final;
+   const error=make('p','','error');error.setAttribute('role','alert');controls.append(status,delay,note);form.append(controls,button,error);
+   form.addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;try{await api('/api/trips/'+trip.id,json('PATCH',{status:status.value,delay_minutes:Number(delay.value),note:note.value}));await refreshBoard();}catch(ex){error.textContent=ex.message;button.disabled=false;}});
+   box.append(heading,form);$('trips').append(box);
+  }
+ }catch(ex){$('board-summary').textContent='Failed to load board: '+ex.message;}
+}
+$('route-form').addEventListener('submit',async e=>{
+ e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;$('route-error').textContent='';
+ try{
+  const stops=$('route-stops').value.trim().split('\n').map(line=>{const parts=line.split('|');if(parts.length!==2||!parts[1].trim()||!/^\d+$/.test(parts[1].trim()))throw Error('Each stop must use Name | nonnegative integer minutes');return {name:parts[0].trim(),offset_minutes:Number(parts[1].trim())};});
+  const route=await api('/api/routes',json('POST',{name:$('route-name').value,mode:$('route-mode').value,stops}));
+  e.target.reset();await refreshRoutes();$('board-route').value=route.id;await refreshBoard();
+ }catch(ex){$('route-error').textContent=ex.message;}finally{button.disabled=false;}
+});
+$('trip-form').addEventListener('submit',async e=>{
+ e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;$('trip-error').textContent='';
+ try{await api('/api/trips',json('POST',{route_id:$('trip-route').value,service_date:$('trip-date').value,departure_time:$('trip-time').value,delay_minutes:Number($('trip-delay').value)}));$('board-route').value=$('trip-route').value;$('board-date').value=$('trip-date').value;await refreshBoard();}
+ catch(ex){$('trip-error').textContent=ex.message;}finally{button.disabled=false;}
+});
+$('alert-form').addEventListener('submit',async e=>{
+ e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;$('alert-error').textContent='';
+ try{await api('/api/alerts',json('POST',{route_id:$('board-route').value,severity:$('alert-severity').value,message:$('alert-message').value}));e.target.reset();await refreshBoard();}
+ catch(ex){$('alert-error').textContent=ex.message;}finally{button.disabled=false;}
+});
+$('board-route').addEventListener('change',refreshBoard);$('board-date').addEventListener('change',refreshBoard);
+let backoff=1000;
+function connect(){
+ const protocol=location.protocol==='https:'?'wss':'ws',socket=new WebSocket(protocol+'://'+location.host+'/ws');
+ socket.onopen=()=>{$('connection').textContent='● Live';backoff=1000;};
+ socket.onmessage=async e=>{try{const data=JSON.parse(e.data);if(data.type==='route_created')await refreshRoutes();else if(data.type!=='connected')await refreshBoard();}catch(err){console.warn(err);}};
+ socket.onclose=()=>{$('connection').textContent='○ Reconnecting';setTimeout(connect,backoff);backoff=Math.min(30000,backoff*2);};
+ socket.onerror=()=>socket.close();
+}
+refreshRoutes().catch(e=>$('board-summary').textContent=e.message);connect();setInterval(()=>refreshBoard(),60000);
+</script></body></html>
