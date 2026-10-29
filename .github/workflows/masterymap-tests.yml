@@ -1,0 +1,23 @@
+name: MasteryMap tests
+on:
+  push:
+    paths:
+      - "masterymap-learning-progress/**"
+      - ".github/workflows/masterymap-tests.yml"
+  pull_request:
+    paths:
+      - "masterymap-learning-progress/**"
+      - ".github/workflows/masterymap-tests.yml"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: masterymap-learning-progress
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q

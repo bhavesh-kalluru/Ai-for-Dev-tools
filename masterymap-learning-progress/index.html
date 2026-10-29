@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MasteryMap · Learning Progress</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,sans-serif;color:#e5e7eb;background:#0b1120}
+*{box-sizing:border-box}body{margin:0}main{max-width:1200px;margin:auto;padding:32px 20px}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px}
+h1{margin:0;font-size:2rem;letter-spacing:-.04em}h2{font-size:1.13rem;margin:0 0 12px}
+p,small{color:#9caec8}small{font-size:.8rem}.eyebrow{color:#8ee5bf;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:.75rem}
+.panel,.stat{background:#151f32;border:1px solid #2a3a52;border-radius:14px;padding:20px}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:24px 0}
+.stat strong{display:block;font-size:1.85rem;margin-top:8px}
+.layout{display:grid;grid-template-columns:330px minmax(0,1fr);gap:18px}
+.stack{display:grid;gap:16px}.section{margin-top:20px}
+label{display:block;font-size:.85rem;color:#c5d3e7;margin:12px 0 6px}
+input,select,textarea{width:100%;background:#0b1120;border:1px solid #40516b;border-radius:8px;padding:10px;color:#fff;font:inherit}
+textarea{min-height:68px;resize:vertical}
+button{background:#5ce2b0;color:#09221c;font-weight:750;border:0;border-radius:8px;padding:10px 14px;cursor:pointer;margin-top:10px}
+button:disabled{opacity:.55;cursor:not-allowed}
+.notice{color:#fda4af;min-height:1.1em;font-size:.83rem}.success{color:#8ee5bf}
+.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:420px}
+th,td{text-align:left;border-bottom:1px solid #2a3a52;padding:12px 10px;font-size:.9rem}
+th{color:#aebed5;font-weight:650}td:first-child{font-weight:700}
+.tag{display:inline-block;border-radius:100px;padding:5px 9px;font-size:.77rem;font-weight:700;white-space:nowrap}
+.mastered{background:#134e4a;color:#a7f3d0}.progressing{background:#713f12;color:#fde68a}
+.needs_support{background:#7f1d1d;color:#fecaca}.unassessed{background:#334155;color:#cbd5e1}
+.event{border-top:1px solid #2a3a52;padding:12px 0}.event strong{color:#e2e8f0}
+@media(max-width:850px){.layout{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body><main>
+<header>
+<div><div class="eyebrow">Education · Competency-based learning</div><h1>MasteryMap</h1><p>See learning progress, not just grades. Demo data only.</p></div>
+<div id="connection" aria-live="polite">Connecting…</div>
+</header>
+<div class="stats" aria-label="Course metrics">
+<div class="stat">Learners<strong id="learners-count">—</strong></div>
+<div class="stat">Skills<strong id="skills-count">—</strong></div>
+<div class="stat">Assessment coverage<strong id="coverage">—</strong></div>
+<div class="stat">Mastery rate<strong id="mastery">—</strong></div>
+</div>
+<div class="layout">
+<aside class="stack">
+<section class="panel">
+<h2>Choose a course</h2>
+<label for="course-select">Active course</label><select id="course-select"></select>
+<form id="course-form"><label for="course-name">New course name</label><input id="course-name" required minlength="3" maxlength="100" placeholder="Foundations of Biology">
+<label for="subject">Subject</label><input id="subject" required minlength="2" maxlength="80" placeholder="Science">
+<button>Create course</button><p class="notice" role="alert"></p></form>
+</section>
+<section class="panel">
+<h2>Add a skill</h2>
+<form id="skill-form"><label for="skill-title">Competency title</label><input id="skill-title" required minlength="3" maxlength="100" placeholder="Interpret data charts">
+<label for="skill-description">Description (optional)</label><textarea id="skill-description" maxlength="500"></textarea>
+<button>Add skill</button><p class="notice" role="alert"></p></form>
+</section>
+<section class="panel">
+<h2>Add a learner</h2>
+<p><small>Use pseudonyms, not student names or sensitive information.</small></p>
+<form id="learner-form"><label for="learner-alias">Learner alias</label><input id="learner-alias" required minlength="2" maxlength="60" placeholder="Learner A">
+<button>Add learner</button><p class="notice" role="alert"></p></form>
+</section>
+</aside>
+<div class="stack">
+<section class="panel">
+<h2>Record assessment evidence</h2>
+<form id="evidence-form">
+<label for="learner-select">Learner</label><select id="learner-select" required></select>
+<label for="skill-select">Skill</label><select id="skill-select" required></select>
+<label for="score">Score (0–100)</label><input id="score" type="number" min="0" max="100" step="1" required placeholder="85">
+<label for="note">Evidence note (optional)</label><textarea id="note" maxlength="500" placeholder="Completed lab exercise"></textarea>
+<button>Save assessment</button><p class="notice" role="alert"></p>
+</form>
+</section>
+<section class="panel"><h2>Competency matrix</h2><p><small>Most recent assessment for each learner and skill. Mastered ≥80, progressing 50–79, needs support &lt;50.</small></p>
+<div class="table-wrap" id="matrix"></div></section>
+<section class="panel"><h2>Recent assessment activity</h2><div id="activity"></div></section>
+</div>
+</div>
+</main>
+<script>
+const byId=id=>document.getElementById(id);
+let activeCourse="", current=null;
+async function api(path,options){
+ const response=await fetch(path,options);
+ const body=await response.json();
+ if(!response.ok)throw new Error(typeof body.detail==="string"?body.detail:"Request failed");
+ return body;
+}
+function element(tag,text,cls){const e=document.createElement(tag);e.textContent=text||"";if(cls)e.className=cls;return e;}
+function option(value,label){return new Option(label,value);}
+function populate(id,items,labelKey,selected){
+ const control=byId(id);control.replaceChildren();
+ for(const item of items)control.add(option(item.id,item[labelKey]));
+ if(selected&&items.some(item=>item.id===selected))control.value=selected;
+}
+function render(){
+ const metrics=current?current.metrics:{learners:0,skills:0,coverage_percent:0,mastery_percent:0};
+ byId("learners-count").textContent=metrics.learners;
+ byId("skills-count").textContent=metrics.skills;
+ byId("coverage").textContent=metrics.coverage_percent+"%";
+ byId("mastery").textContent=metrics.mastery_percent+"%";
+ const matrix=byId("matrix"),activity=byId("activity");
+ matrix.replaceChildren();activity.replaceChildren();
+ if(!current){matrix.append(element("p","Create a course to get started."));return;}
+ const prevLearner=byId("learner-select").value,prevSkill=byId("skill-select").value;
+ populate("learner-select",current.learners,"alias",prevLearner);
+ populate("skill-select",current.skills,"title",prevSkill);
+ if(!current.learners.length||!current.skills.length){
+  matrix.append(element("p","Add at least one learner and one skill to see progress."));
+ }else{
+  const table=element("table"),thead=element("thead"),head=element("tr");
+  head.append(element("th","Learner"));
+  for(const skill of current.skills)head.append(element("th",skill.title));
+  thead.append(head);table.append(thead);
+  const tbody=element("tbody");
+  for(const learner of current.matrix){
+   const tr=element("tr");tr.append(element("td",learner.alias));
+   for(const cell of learner.cells){
+    const td=element("td");
+    const label=cell.score===null?"Not assessed":cell.score+" · "+cell.level.replace("_"," ");
+    td.append(element("span",label,"tag "+cell.level));tr.append(td);
+   }
+   tbody.append(tr);
+  }
+  table.append(tbody);matrix.append(table);
+ }
+ if(!current.recent_evidence.length)activity.append(element("p","No assessments recorded yet."));
+ for(const event of current.recent_evidence.slice(0,10)){
+  const item=element("div","","event");
+  item.append(element("strong",event.learner_alias+" · "+event.skill_title));
+  item.append(element("p",event.score+"/100 — "+(event.note||"No note")));
+  item.append(element("small",new Date(event.created_at).toLocaleString()));
+  activity.append(item);
+ }
+}
+async function refresh(){
+ try{
+  const courses=await api("/api/courses");
+  const previous=activeCourse;
+  populate("course-select",courses,"name",previous);
+  activeCourse=courses.some(c=>c.id===previous)?previous:(courses[0]?courses[0].id:"");
+  byId("course-select").value=activeCourse;
+  current=activeCourse?await api("/api/courses/"+encodeURIComponent(activeCourse)+"/dashboard"):null;
+  render();
+ }catch(err){byId("activity").textContent="Unable to load data: "+err.message;}
+}
+function setupForm(id,makeRequest){
+ const form=byId(id);
+ form.addEventListener("submit",async event=>{
+  event.preventDefault();
+  const button=form.querySelector("button"),notice=form.querySelector(".notice");
+  button.disabled=true;notice.textContent="";
+  try{await makeRequest();form.reset();await refresh();}
+  catch(err){notice.textContent=err.message;}
+  finally{button.disabled=false;}
+ });
+}
+function post(path,data){return api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});}
+byId("course-select").addEventListener("change",event=>{activeCourse=event.target.value;refresh();});
+setupForm("course-form",async()=>{
+ const course=await post("/api/courses",{name:byId("course-name").value,subject:byId("subject").value});
+ activeCourse=course.id;
+});
+setupForm("skill-form",()=>post("/api/courses/"+encodeURIComponent(activeCourse)+"/skills",{
+ title:byId("skill-title").value,description:byId("skill-description").value
+}));
+setupForm("learner-form",()=>post("/api/courses/"+encodeURIComponent(activeCourse)+"/learners",{
+ alias:byId("learner-alias").value
+}));
+setupForm("evidence-form",()=>post("/api/evidence",{
+ learner_id:byId("learner-select").value,skill_id:byId("skill-select").value,
+ score:Number(byId("score").value),note:byId("note").value
+}));
+let backoff=1000;
+function connect(){
+ const ws=new WebSocket((location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/ws");
+ ws.onopen=()=>{byId("connection").textContent="● Live";backoff=1000;};
+ ws.onmessage=event=>{const data=JSON.parse(event.data);if(data.type!=="connected")refresh();};
+ ws.onclose=()=>{byId("connection").textContent="○ Reconnecting";setTimeout(connect,backoff);backoff=Math.min(backoff*2,30000);};
+ ws.onerror=()=>ws.close();
+}
+refresh();connect();setInterval(refresh,60000);
+</script></body></html>
